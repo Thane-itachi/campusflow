@@ -1,0 +1,10 @@
+[
+  {
+    "id": "T001",
+    "title": "Broken classroom projector",
+    "description": "The projector in Room 2 is not working.",
+    "priority": "high",
+    "status": "open",
+    "assigned_to": null
+  }
+]
