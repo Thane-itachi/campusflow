@@ -1,4 +1,4 @@
-"""Tests for campusflow.storage — Engineer A."""
+"""Tests for CampusFlow ticket storage."""
 import json
 import tempfile
 import unittest
@@ -8,72 +8,120 @@ from campusflow import storage
 from campusflow.tickets import create_ticket, next_ticket_id
 
 
-class StorageTests(unittest.TestCase):
+class TestTicketStorage(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.path = Path(self.tmp.name) / "tickets.json"
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.path = Path(self.temp_dir.name) / "data" / "tickets.json"
 
     def tearDown(self):
-        self.tmp.cleanup()
+        self.temp_dir.cleanup()
 
-    # ----------------------------------------------------------- load
     def test_missing_file_returns_empty_list(self):
         self.assertEqual(storage.load_tickets(self.path), [])
 
     def test_empty_file_returns_empty_list(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text("", encoding="utf-8")
         self.assertEqual(storage.load_tickets(self.path), [])
 
-    def test_malformed_json_raises_storage_error(self):
-        self.path.write_text("{ not json", encoding="utf-8")
-        with self.assertRaises(storage.StorageError):
-            storage.load_tickets(self.path)
+    def test_save_and_load_tickets(self):
+        tickets = [{
+            "id": "T001",
+            "title": "Broken projector",
+            "description": "Room 2 projector is not working.",
+            "priority": "high",
+            "status": "open",
+            "assigned_to": None,
+        }]
 
-    def test_malformed_json_is_not_overwritten(self):
-        original = "{ not json"
-        self.path.write_text(original, encoding="utf-8")
-        with self.assertRaises(storage.StorageError):
-            storage.load_tickets(self.path)
-        self.assertEqual(self.path.read_text(encoding="utf-8"), original)
+        storage.save_tickets(tickets, self.path)
+        self.assertEqual(storage.load_tickets(self.path), tickets)
 
-    def test_wrong_top_level_type_raises(self):
-        self.path.write_text(json.dumps({"a": 1}), encoding="utf-8")
-        with self.assertRaises(storage.StorageError):
-            storage.load_tickets(self.path)
-
-    # ----------------------------------------------------------- save
-    def test_save_creates_parent_dirs(self):
-        nested = Path(self.tmp.name) / "deep" / "nested" / "tickets.json"
-        storage.save_tickets([], nested)
-        self.assertTrue(nested.exists())
-
-    # ----------------------------------------------------------- round-trip
-    def test_round_trip_preserves_tickets(self):
+    def test_round_trip_new_ticket_schema(self):
         tickets = []
-        create_ticket(tickets, title="wifi", category="Network",
-                      urgency="high", affected_users=20)
-        create_ticket(tickets, title="laptop", category="Hardware",
-                      urgency="medium", affected_users=2)
+        create_ticket(
+            tickets,
+            title="Wi-Fi down",
+            category="Network",
+            urgency="high",
+            affected_users=20,
+        )
 
         storage.save_tickets(tickets, self.path)
         reloaded = storage.load_tickets(self.path)
 
         self.assertEqual(reloaded, tickets)
-        # IDs keep counting after reload.
-        self.assertEqual(next_ticket_id(reloaded), "T003")
+        self.assertEqual(next_ticket_id(reloaded), "T002")
 
-    def test_round_trip_empty(self):
+    def test_round_trip_empty_list(self):
         storage.save_tickets([], self.path)
         self.assertEqual(storage.load_tickets(self.path), [])
 
-    def test_save_is_atomic_no_tmp_file_left_behind(self):
+    def test_invalid_json_is_rejected(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text("{invalid json", encoding="utf-8")
+
+        with self.assertRaises(ValueError):
+            storage.load_tickets(self.path)
+
+    def test_malformed_json_raises_storage_error(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text("{ not json", encoding="utf-8")
+
+        with self.assertRaises(storage.StorageError):
+            storage.load_tickets(self.path)
+
+    def test_malformed_json_is_not_overwritten(self):
+        original = "{ not json"
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(original, encoding="utf-8")
+
+        with self.assertRaises(storage.StorageError):
+            storage.load_tickets(self.path)
+
+        self.assertEqual(
+            self.path.read_text(encoding="utf-8"),
+            original,
+        )
+
+    def test_non_list_json_is_rejected(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text('{"id": "T001"}', encoding="utf-8")
+
+        with self.assertRaises(ValueError):
+            storage.load_tickets(self.path)
+
+    def test_non_object_ticket_is_rejected(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(
+            json.dumps([{"id": "T001"}, "invalid ticket"]),
+            encoding="utf-8",
+        )
+
+        with self.assertRaises(ValueError):
+            storage.load_tickets(self.path)
+
+    def test_save_creates_parent_directories(self):
+        nested = Path(self.temp_dir.name) / "deep" / "nested" / "tickets.json"
+        storage.save_tickets([], nested)
+        self.assertTrue(nested.exists())
+
+    def test_save_leaves_no_temporary_file(self):
         tickets = []
-        create_ticket(tickets, title="x", category="Other",
-                      urgency="low", affected_users=1)
+        create_ticket(
+            tickets,
+            title="Network issue",
+            category="Other",
+            urgency="low",
+            affected_users=1,
+        )
+
         storage.save_tickets(tickets, self.path)
-        # Nothing left over.
-        leftovers = list(self.path.parent.glob("*.tmp"))
-        self.assertEqual(leftovers, [])
+
+        self.assertEqual(
+            list(self.path.parent.glob("*.tmp")),
+            [],
+        )
 
 
 if __name__ == "__main__":
