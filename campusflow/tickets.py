@@ -1,48 +1,207 @@
-"""Ticket creation and validation for CampusFlow."""
+"""Ticket creation, validation, priority calculation, and assignment."""
+from __future__ import annotations
 
 VALID_PRIORITIES = {"low", "medium", "high", "critical"}
+VALID_CATEGORIES = ("Network", "Hardware", "Software", "Other")
+VALID_URGENCIES = ("low", "medium", "high")
+VALID_STATUSES = ("open", "in_progress", "resolved")
+
+_CATEGORY_LOOKUP = {c.lower(): c for c in VALID_CATEGORIES}
+_URGENCY_LOOKUP = {u.lower(): u for u in VALID_URGENCIES}
 
 
-def create_ticket(tickets, title, description, priority="medium"):
-    """Create a ticket and append it to the supplied ticket list."""
+class ValidationError(ValueError):
+    """Raised when ticket input fails validation."""
 
-    if not isinstance(title, str) or not title.strip():
-        raise ValueError("Ticket title cannot be empty.")
 
-    if not isinstance(description, str) or not description.strip():
-        raise ValueError("Ticket description cannot be empty.")
+def normalize_category(raw: str) -> str:
+    if not isinstance(raw, str):
+        raise ValidationError("Category must be text.")
 
-    if not isinstance(priority, str):
-        raise ValueError("Priority must be a string.")
+    key = raw.strip().lower()
+    if key not in _CATEGORY_LOOKUP:
+        raise ValidationError(
+            f"Unknown category {raw!r}. "
+            f"Choose from {', '.join(VALID_CATEGORIES)}."
+        )
+    return _CATEGORY_LOOKUP[key]
 
-    priority = priority.strip().lower()
 
-    if priority not in VALID_PRIORITIES:
-        raise ValueError(f"Invalid priority: {priority}")
+def normalize_urgency(raw: str) -> str:
+    if not isinstance(raw, str):
+        raise ValidationError("Urgency must be text.")
 
-    # Generate the next sequential ticket ID.
-    existing_numbers = []
+    key = raw.strip().lower()
+    if key not in _URGENCY_LOOKUP:
+        raise ValidationError(
+            f"Unknown urgency {raw!r}. "
+            f"Choose from {', '.join(VALID_URGENCIES)}."
+        )
+    return _URGENCY_LOOKUP[key]
+
+
+def validate_title(raw: str) -> str:
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValidationError("Title must not be blank.")
+    return raw.strip()
+
+
+def validate_description(raw: str) -> str:
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValidationError("Description must not be blank.")
+    return raw.strip()
+
+
+def validate_affected_users(raw) -> int:
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
+        raise ValidationError("Affected users must be a positive integer.")
+    return raw
+
+
+def compute_priority(urgency: str, affected_users: int) -> str:
+    """Calculate priority; the first matching rule wins."""
+    if urgency == "high" and affected_users >= 10:
+        return "critical"
+    if urgency == "high" or affected_users >= 10:
+        return "high"
+    if urgency == "medium" or affected_users >= 3:
+        return "medium"
+    return "low"
+
+
+def next_ticket_id(tickets: list[dict]) -> str:
+    """Return the next sequential ID, using numeric rather than text ordering."""
+    highest = 0
 
     for ticket in tickets:
+        if not isinstance(ticket, dict):
+            continue
+
         ticket_id = ticket.get("id", "")
+        if (
+            isinstance(ticket_id, str)
+            and ticket_id.startswith("T")
+            and ticket_id[1:].isdigit()
+        ):
+            highest = max(highest, int(ticket_id[1:]))
 
-        if isinstance(ticket_id, str) and ticket_id.startswith("T"):
-            try:
-                existing_numbers.append(int(ticket_id[1:]))
-            except ValueError:
-                continue
+    return f"T{highest + 1:03d}"
 
-    next_number = max(existing_numbers, default=0) + 1
-    ticket_id = f"T{next_number:03d}"
 
-    ticket = {
-        "id": ticket_id,
-        "title": title.strip(),
-        "description": description.strip(),
-        "priority": priority,
-        "status": "open",
-        "assigned_to": None,
-    }
+def find_ticket(tickets: list[dict], ticket_id: str) -> dict | None:
+    """Find a ticket by ID without regard to letter case."""
+    if not isinstance(ticket_id, str):
+        return None
+
+    wanted = ticket_id.strip().upper()
+
+    for ticket in tickets:
+        if isinstance(ticket, dict):
+            existing = ticket.get("id")
+            if isinstance(existing, str) and existing.upper() == wanted:
+                return ticket
+
+    return None
+
+
+def create_ticket(
+    tickets: list[dict],
+    *args,
+    title=None,
+    description=None,
+    priority=None,
+    category=None,
+    urgency=None,
+    affected_users=None,
+) -> dict:
+    """Create a ticket using either supported interface.
+
+    Legacy interface:
+        create_ticket(tickets, title, description, priority="medium")
+
+    Category/urgency interface:
+        create_ticket(
+            tickets, title="Wi-Fi down", category="Network",
+            urgency="high", affected_users=15
+        )
+
+    Validation happens before appending, so invalid input leaves the list
+    unchanged.
+    """
+    if args:
+        if len(args) not in (2, 3):
+            raise ValidationError(
+                "Legacy creation requires title, description, and optional priority."
+            )
+        if title is not None or description is not None:
+            raise ValidationError("Do not mix positional and keyword title/description.")
+        title, description = args[:2]
+        if len(args) == 3:
+            if priority is not None:
+                raise ValidationError("Priority was supplied more than once.")
+            priority = args[2]
+
+    clean_title = validate_title(title)
+    ticket_id = next_ticket_id(tickets)
+
+    # New interface: calculate priority from urgency and affected users.
+    if category is not None or urgency is not None or affected_users is not None:
+        clean_category = normalize_category(category)
+        clean_urgency = normalize_urgency(urgency)
+        clean_users = validate_affected_users(affected_users)
+
+        ticket = {
+            "id": ticket_id,
+            "title": clean_title,
+            "category": clean_category,
+            "urgency": clean_urgency,
+            "affected_users": clean_users,
+            "priority": compute_priority(clean_urgency, clean_users),
+            "status": "open",
+            "assigned_to": None,
+        }
+
+        if description is not None:
+            ticket["description"] = validate_description(description)
+
+    # Original interface: accept a description and optional explicit priority.
+    else:
+        clean_description = validate_description(description)
+        chosen_priority = "medium" if priority is None else priority
+
+        if not isinstance(chosen_priority, str):
+            raise ValidationError("Priority must be a string.")
+
+        chosen_priority = chosen_priority.strip().lower()
+        if chosen_priority not in VALID_PRIORITIES:
+            raise ValidationError(f"Invalid priority: {chosen_priority}")
+
+        ticket = {
+            "id": ticket_id,
+            "title": clean_title,
+            "description": clean_description,
+            "priority": chosen_priority,
+            "status": "open",
+            "assigned_to": None,
+        }
 
     tickets.append(ticket)
+    return ticket
+
+
+def assign_ticket(
+    tickets: list[dict],
+    ticket_id: str,
+    staff_name: str,
+) -> dict:
+    """Assign a ticket to a non-empty staff name."""
+    ticket = find_ticket(tickets, ticket_id)
+
+    if ticket is None:
+        raise ValidationError(f"No ticket with id {ticket_id!r}.")
+
+    if not isinstance(staff_name, str) or not staff_name.strip():
+        raise ValidationError("Staff name must not be blank.")
+
+    ticket["assigned_to"] = staff_name.strip()
     return ticket

@@ -1,49 +1,80 @@
-"""JSON persistence for CampusFlow tickets."""
+"""JSON persistence — the only module that touches the tickets file.
+
+Owner: Engineer A.
+
+Contract:
+- Missing or empty file -> [].
+- Malformed JSON or invalid ticket data -> StorageError.
+- Loading never modifies the file.
+- Saving uses an atomic temporary-file replacement.
+- Both functions accept an optional path for testability.
+"""
+from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
+DEFAULT_PATH = Path("data") / "tickets.json"
+DEFAULT_STORAGE_PATH = DEFAULT_PATH
 
-DEFAULT_STORAGE_PATH = Path("data/tickets.json")
+
+class StorageError(ValueError):
+    """Raised when ticket storage cannot be read or validated."""
 
 
-def load_tickets(path=DEFAULT_STORAGE_PATH):
-    """Load tickets from JSON, returning an empty list if no file exists."""
+def load_tickets(path: Path | str = DEFAULT_PATH) -> list[dict]:
+    """Load and validate tickets without modifying the stored file."""
+    p = Path(path)
 
-    path = Path(path)
-
-    if not path.exists():
+    if not p.exists():
         return []
 
     try:
-        with path.open("r", encoding="utf-8") as file:
-            tickets = json.load(file)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Ticket storage contains invalid JSON: {path}") from exc
+        raw = p.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise StorageError(f"Could not read {p}: {exc}") from exc
 
-    if not isinstance(tickets, list):
-        raise ValueError("Ticket storage must contain a JSON list.")
-
-    if not all(isinstance(ticket, dict) for ticket in tickets):
-        raise ValueError("Every stored ticket must be a JSON object.")
-
-    return tickets
-
-
-def save_tickets(tickets, path=DEFAULT_STORAGE_PATH):
-    """Persist the supplied ticket list to JSON."""
-
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    temporary_path = path.with_suffix(path.suffix + ".tmp")
+    if not raw.strip():
+        return []
 
     try:
-        with temporary_path.open("w", encoding="utf-8") as file:
-            json.dump(tickets, file, indent=2, ensure_ascii=False)
-            file.write("\n")
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise StorageError(
+            f"{p} contains invalid JSON "
+            f"({exc.msg} at line {exc.lineno}). "
+            "The file was not modified."
+        ) from exc
 
-        temporary_path.replace(path)
+    if not isinstance(data, list):
+        raise StorageError(f"{p} must contain a JSON list of tickets.")
+
+    if not all(isinstance(ticket, dict) for ticket in data):
+        raise StorageError("Every stored ticket must be a JSON object.")
+
+    return data
+
+
+def save_tickets(
+    tickets: list[dict],
+    path: Path | str = DEFAULT_PATH,
+) -> None:
+    """Atomically save tickets as formatted JSON."""
+    p = Path(path)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(
+            json.dumps(tickets, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(tmp, p)
+    except (OSError, TypeError, ValueError) as exc:
+        raise StorageError(f"Could not save tickets to {p}: {exc}") from exc
     finally:
-        if temporary_path.exists():
-            temporary_path.unlink()
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass

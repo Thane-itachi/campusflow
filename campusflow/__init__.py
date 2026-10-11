@@ -1,0 +1,1 @@
+"""CampusFlow — CLI helpdesk ticket manager."""
