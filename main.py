@@ -1,3 +1,5 @@
+from campusflow.search import search_tickets, filter_tickets
+from campusflow.reports import generate_ticket_report
 from campusflow.tickets import (
     create_ticket,
     generate_ticket_id,
@@ -122,7 +124,6 @@ def update_ticket_status(tickets):
             save_tickets(tickets, "tickets.json")
             print("Ticket status has been Successfully Updated🎉")
 
-print("Ticket ID is not found or correct.")
 
 def assign_ticket(tickets):
     if not tickets:
@@ -170,14 +171,87 @@ def search_ticket(tickets):
 
     print("Ticket ID not found.")
 
+def search_tickets_by_title(tickets):
+    """Find tickets using words from their titles."""
+    title = input("Enter a word or phrase from the ticket title: ").strip()
+
+    results = search_tickets(tickets, title)
+
+    if results:
+        print(f"\nFound {len(results)} matching ticket(s).")
+        view_tickets(results)
+    else:
+        print("\nNo tickets matched your search.")
+
+
+def filter_tickets_menu(tickets):
+    """Allow users to filter tickets by category, status, and priority."""
+    print("\nLeave a filter blank to ignore it.")
+
+    category = input(
+        "Category (Network/Hardware/Software/Other): "
+    ).strip()
+
+    status = input(
+        "Status (open/in_progress/resolved): "
+    ).strip().lower()
+
+    priority = input(
+        "Priority (critical/high/medium/low): "
+    ).strip().lower()
+
+    results = filter_tickets(
+        tickets,
+        category=category or None,
+        status=status or None,
+        priority=priority or None,
+    )
+
+    if results:
+        print(f"\nFound {len(results)} matching ticket(s).")
+        view_tickets(results)
+    else:
+        print("\nNo tickets matched those filters.")
+
+
+def view_ticket_report(tickets):
+    """Display ticket statistics."""
+    report = generate_ticket_report(tickets)
+
+    print("\n===== CAMPUSFLOW TICKET REPORT =====")
+    print(f"Total tickets: {report['total']}")
+    print(f"Open tickets: {report['open']}")
+    print(f"In-progress tickets: {report['in_progress']}")
+    print(f"Resolved tickets: {report['resolved']}")
+    print(f"Unresolved tickets: {report['unresolved']}")
+    print(
+        f"Resolution percentage: "
+        f"{report['resolution_percentage']}%"
+    )
+
+    print("\nTickets by priority:")
+    for priority, count in report["by_priority"].items():
+        print(f"  {priority}: {count}")
+
+    print("\nTickets by category:")
+    for category, count in report["by_category"].items():
+        print(f"  {category}: {count}")
+
+    print("\nTickets by assignee:")
+    for assignee, count in report["by_assignee"].items():
+        print(f"  {assignee}: {count}")
+
 while True:
-    print("\n==== CAMPUS FLOW ====")
+    print("\n==== CAMPUSFLOW ====")
     print("1. Create a ticket")
-    print("2. View all Tickets")
+    print("2. View all tickets")
     print("3. Update ticket status")
     print("4. Assign ticket")
     print("5. Search ticket by ID")
-    print("6. Exit")
+    print("6. Search tickets by title")
+    print("7. Filter tickets")
+    print("8. View ticket report")
+    print("9. Exit")
 
     choice = input("Please choose an option: ").strip()
 
@@ -186,16 +260,28 @@ while True:
 
     elif choice == "2":
         view_tickets(tickets)
-    
+
     elif choice == "3":
         update_ticket_status(tickets)
 
     elif choice == "4":
         assign_ticket(tickets)
-    
+
     elif choice == "5":
         search_ticket(tickets)
 
-    elif choice == "5":
-        print("Thank you for using Learn2Earn Campus Flow")
+    elif choice == "6":
+        search_tickets_by_title(tickets)
+
+    elif choice == "7":
+        filter_tickets_menu(tickets)
+
+    elif choice == "8":
+        view_ticket_report(tickets)
+
+    elif choice == "9":
+        print("Thank you for using CampusFlow!")
         break
+
+    else:
+        print("Invalid choice. Please select an option from 1 to 9.")
